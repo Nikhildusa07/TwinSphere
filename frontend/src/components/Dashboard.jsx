@@ -67,7 +67,7 @@ function Dashboard() {
                 ),
 
                 axios.get(
-                    `${API_BASE_URL}/action-feedback/accuracy`
+                    `${API_BASE_URL}/feedback/accuracy`
                 ),
             ]);
 
