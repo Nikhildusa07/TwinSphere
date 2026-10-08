@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-
 import axios from "axios";
 
 import {
@@ -13,23 +12,38 @@ import {
 } from "recharts";
 
 
-const API_BASE_URL = (
-    import.meta.env.VITE_API_URL ||
-    "https://twinsphere.onrender.com"
-).replace(/\/+$/, "");
+const API_BASE_URL = "https://twinsphere.onrender.com";
+
+
+const api = axios.create({
+    baseURL: API_BASE_URL,
+    timeout: 30000,
+    headers: {
+        "Content-Type": "application/json",
+    },
+});
 
 
 function Dashboard() {
     const [dashboard, setDashboard] = useState(null);
+
     const [sensorHistory, setSensorHistory] = useState([]);
 
-    const [simulationResults, setSimulationResults] = useState([]);
+    const [simulationResults, setSimulationResults] =
+        useState([]);
+
     const [decision, setDecision] = useState(null);
 
-    const [predictionAccuracy, setPredictionAccuracy] = useState(null);
-    const [learningStatus, setLearningStatus] = useState(null);
+    const [predictionAccuracy, setPredictionAccuracy] =
+        useState(null);
+
+    const [learningStatus, setLearningStatus] =
+        useState(null);
 
     const [loading, setLoading] = useState(true);
+
+    const [errorMessage, setErrorMessage] =
+        useState("");
 
     const [simulationLoading, setSimulationLoading] =
         useState(false);
@@ -38,50 +52,436 @@ function Dashboard() {
         useState(false);
 
     const [simulationInput, setSimulationInput] = useState({
-        temperature_change: 0,
-        vibration_change: 0,
-        power_usage_change: 0,
-        operating_speed_change: 0,
+        temperature_change: 10,
+        vibration_change: 2,
+        power_usage_change: 5,
+        operating_speed_change: 200,
     });
 
 
-    const loadAnalytics = async (digitalTwinId) => {
+    /* =========================================================
+       ERROR HELPER
+    ========================================================= */
+
+    const getErrorMessage = (error, endpoint) => {
+        if (error?.response) {
+            return `${endpoint} failed with HTTP ${error.response.status}: ${
+                error.response.data?.detail ||
+                JSON.stringify(error.response.data) ||
+                "Backend returned an error."
+            }`;
+        }
+
+        if (error?.request) {
+            return `${endpoint} could not reach the TwinSphere backend. This is usually a CORS, network, or Render availability issue.`;
+
+        }
+
+        return `${endpoint} failed: ${
+            error?.message ||
+            "Unknown error."
+        }`;
+    };
+
+
+    /* =========================================================
+       LOAD MAIN DASHBOARD
+    ========================================================= */
+
+    const loadDashboard = async () => {
+        setLoading(true);
+        setErrorMessage("");
+
+        try {
+            /*
+             * First check whether Render backend is alive.
+             */
+
+            try {
+                await api.get("/health");
+            } catch (healthError) {
+                throw new Error(
+                    getErrorMessage(
+                        healthError,
+                        "Backend /health"
+                    )
+                );
+            }
+
+
+            /*
+             * Try the normal dashboard endpoint.
+             */
+
+            let dashboardData = null;
+
+            try {
+                const response = await api.get(
+                    "/dashboard/overview"
+                );
+
+                dashboardData = response.data;
+            } catch (dashboardError) {
+                console.error(
+                    "Dashboard overview failed:",
+                    dashboardError
+                );
+            }
+
+
+            /*
+             * Always load digital twins independently.
+             */
+
+            let twins = [];
+
+            try {
+                const twinResponse = await api.get(
+                    "/digital-twins/"
+                );
+
+                twins = Array.isArray(
+                    twinResponse.data
+                )
+                    ? twinResponse.data
+                    : [];
+            } catch (twinError) {
+                console.error(
+                    "Digital twin API failed:",
+                    twinError
+                );
+
+                if (!dashboardData) {
+                    throw new Error(
+                        getErrorMessage(
+                            twinError,
+                            "Digital Twin API"
+                        )
+                    );
+                }
+            }
+
+
+            /*
+             * Always load sensor history independently.
+             */
+
+            let sensors = [];
+
+            try {
+                const sensorResponse = await api.get(
+                    "/sensor-data/"
+                );
+
+                sensors = Array.isArray(
+                    sensorResponse.data
+                )
+                    ? sensorResponse.data
+                    : [];
+            } catch (sensorError) {
+                console.error(
+                    "Sensor API failed:",
+                    sensorError
+                );
+
+                if (!dashboardData) {
+                    throw new Error(
+                        getErrorMessage(
+                            sensorError,
+                            "Sensor Data API"
+                        )
+                    );
+                }
+            }
+
+
+            /*
+             * Prepare sensor history.
+             */
+
+            const history = [...sensors]
+                .sort(
+                    (a, b) =>
+                        new Date(a.recorded_at) -
+                        new Date(b.recorded_at)
+                )
+                .slice(-10);
+
+            setSensorHistory(history);
+
+
+            /*
+             * If /dashboard/overview works,
+             * use its data.
+             */
+
+            if (dashboardData) {
+                setDashboard(dashboardData);
+
+                await loadAnalytics(
+                    dashboardData?.digital_twin?.id
+                );
+
+                return;
+            }
+
+
+            /*
+             * FALLBACK DASHBOARD
+             *
+             * If /dashboard/overview fails, construct
+             * the dashboard from digital-twins and
+             * sensor-data APIs.
+             */
+
+            const twin = twins[0] || {};
+
+            const latestSensor =
+                [...sensors]
+                    .sort(
+                        (a, b) =>
+                            new Date(b.recorded_at) -
+                            new Date(a.recorded_at)
+                    )[0] || {};
+
+
+            const currentState = {
+                temperature:
+                    Number(
+                        latestSensor.temperature ??
+                        82.3
+                    ),
+
+                vibration:
+                    Number(
+                        latestSensor.vibration ??
+                        3.9
+                    ),
+
+                power_usage:
+                    Number(
+                        latestSensor.power_usage ??
+                        18.7
+                    ),
+
+                operating_speed:
+                    Number(
+                        latestSensor.operating_speed ??
+                        1520
+                    ),
+            };
+
+
+            /*
+             * Calculate risk locally.
+             */
+
+            let riskScore = 0;
+
+            const riskFactors = [];
+
+
+            if (currentState.temperature > 90) {
+                riskScore += 30;
+                riskFactors.push(
+                    "Temperature is above critical threshold."
+                );
+            } else if (
+                currentState.temperature > 80
+            ) {
+                riskScore += 15;
+                riskFactors.push(
+                    "Temperature is elevated."
+                );
+            }
+
+
+            if (currentState.vibration > 5) {
+                riskScore += 30;
+                riskFactors.push(
+                    "Vibration is above critical threshold."
+                );
+            } else if (
+                currentState.vibration > 4
+            ) {
+                riskScore += 15;
+                riskFactors.push(
+                    "Vibration is elevated."
+                );
+            }
+
+
+            if (currentState.power_usage > 25) {
+                riskScore += 20;
+                riskFactors.push(
+                    "Power usage is above critical threshold."
+                );
+            } else if (
+                currentState.power_usage > 20
+            ) {
+                riskScore += 10;
+                riskFactors.push(
+                    "Power usage is elevated."
+                );
+            }
+
+
+            if (currentState.operating_speed > 1800) {
+                riskScore += 20;
+                riskFactors.push(
+                    "Operating speed is above critical threshold."
+                );
+            } else if (
+                currentState.operating_speed > 1650
+            ) {
+                riskScore += 10;
+                riskFactors.push(
+                    "Operating speed is elevated."
+                );
+            }
+
+
+            let riskLevel = "low";
+
+            if (riskScore >= 60) {
+                riskLevel = "critical";
+            } else if (riskScore >= 30) {
+                riskLevel = "high";
+            } else if (riskScore >= 15) {
+                riskLevel = "medium";
+            }
+
+
+            const fallbackDashboard = {
+                digital_twin: {
+                    id: twin.id ?? 1,
+                    name:
+                        twin.name ||
+                        "Factory Machine 01",
+                    entity_type:
+                        twin.entity_type ||
+                        "Industrial Machine",
+                    status:
+                        twin.status ||
+                        "normal",
+                },
+
+                current_state: currentState,
+
+                risk: {
+                    risk_score: riskScore,
+                    risk_level: riskLevel,
+                    risk_factors: riskFactors,
+                },
+
+                learning_status: {
+                    total_predictions: 0,
+                    accuracy_rate: 0,
+                    average_error: 0,
+                    accurate_predictions: 0,
+                    retraining_required: false,
+                    retraining_threshold: 5,
+                    reason:
+                        "Prediction feedback is being collected.",
+                },
+            };
+
+
+            setDashboard(
+                fallbackDashboard
+            );
+
+
+            await loadAnalytics(
+                fallbackDashboard.digital_twin.id
+            );
+        } catch (error) {
+            console.error(
+                "TwinSphere dashboard error:",
+                error
+            );
+
+            setErrorMessage(
+                error?.message ||
+                "Unable to load TwinSphere dashboard."
+            );
+        } finally {
+            setLoading(false);
+        }
+    };
+
+
+    /* =========================================================
+       ANALYTICS
+    ========================================================= */
+
+    const loadAnalytics = async (
+        digitalTwinId
+    ) => {
         if (!digitalTwinId) {
             return;
         }
 
-        const results = await Promise.allSettled([
-            axios.post(
-                `${API_BASE_URL}/predictions/causal-analysis?digital_twin_id=${digitalTwinId}`
-            ),
 
-            axios.post(
-                `${API_BASE_URL}/predictions/time-series?digital_twin_id=${digitalTwinId}`
-            ),
+        const requests = [
+            {
+                name: "Causal Analysis",
+                request: api.post(
+                    `/predictions/causal-analysis?digital_twin_id=${digitalTwinId}`
+                ),
+            },
 
-            axios.get(
-                `${API_BASE_URL}/predictions/simulation-vs-actual`
-            ),
+            {
+                name: "Time Series",
+                request: api.post(
+                    `/predictions/time-series?digital_twin_id=${digitalTwinId}`
+                ),
+            },
 
-            axios.get(
-                `${API_BASE_URL}/predictions/reinforcement-learning?digital_twin_id=${digitalTwinId}`
-            ),
+            {
+                name: "Simulation vs Actual",
+                request: api.get(
+                    "/predictions/simulation-vs-actual"
+                ),
+            },
 
-            axios.get(
-                `${API_BASE_URL}/feedback/accuracy`
-            ),
+            {
+                name: "Reinforcement Learning",
+                request: api.get(
+                    `/predictions/reinforcement-learning?digital_twin_id=${digitalTwinId}`
+                ),
+            },
 
-            axios.get(
-                `${API_BASE_URL}/feedback/learning-status`
-            ),
-        ]);
+            {
+                name: "Prediction Accuracy",
+                request: api.get(
+                    "/feedback/accuracy"
+                ),
+            },
+
+            {
+                name: "Learning Status",
+                request: api.get(
+                    "/feedback/learning-status"
+                ),
+            },
+        ];
 
 
-        const accuracyResult = results[4];
+        const results =
+            await Promise.allSettled(
+                requests.map(
+                    (item) => item.request
+                )
+            );
+
+
+        const accuracyResult =
+            results[4];
 
         if (
-            accuracyResult.status === "fulfilled" &&
-            accuracyResult.value?.data
+            accuracyResult.status ===
+            "fulfilled"
         ) {
             setPredictionAccuracy(
                 accuracyResult.value.data
@@ -89,11 +489,12 @@ function Dashboard() {
         }
 
 
-        const learningResult = results[5];
+        const learningResult =
+            results[5];
 
         if (
-            learningResult.status === "fulfilled" &&
-            learningResult.value?.data
+            learningResult.status ===
+            "fulfilled"
         ) {
             setLearningStatus(
                 learningResult.value.data
@@ -101,108 +502,19 @@ function Dashboard() {
         }
 
 
-        results.forEach((result, index) => {
-            if (result.status === "rejected") {
-                const endpointNames = [
-                    "causal-analysis",
-                    "time-series",
-                    "simulation-vs-actual",
-                    "reinforcement-learning",
-                    "feedback/accuracy",
-                    "feedback/learning-status",
-                ];
-
-                console.error(
-                    `Analytics endpoint failed: ${endpointNames[index]}`,
-                    result.reason
-                );
+        results.forEach(
+            (result, index) => {
+                if (
+                    result.status ===
+                    "rejected"
+                ) {
+                    console.error(
+                        `${requests[index].name} failed:`,
+                        result.reason
+                    );
+                }
             }
-        });
-    };
-
-
-    const loadDashboard = async () => {
-        try {
-            setLoading(true);
-
-            setDashboard(null);
-
-
-            let dashboardData = null;
-
-
-            try {
-                const dashboardResponse = await axios.get(
-                    `${API_BASE_URL}/dashboard/overview`
-                );
-
-                dashboardData = dashboardResponse.data;
-
-                setDashboard(dashboardData);
-            } catch (error) {
-                console.error(
-                    "Dashboard overview loading error:",
-                    error
-                );
-
-                setDashboard(null);
-
-                return;
-            }
-
-
-            try {
-                const sensorResponse = await axios.get(
-                    `${API_BASE_URL}/sensor-data/`
-                );
-
-                const sensorData = Array.isArray(
-                    sensorResponse.data
-                )
-                    ? sensorResponse.data
-                    : [];
-
-                const history = [...sensorData]
-                    .sort(
-                        (a, b) =>
-                            new Date(a.recorded_at) -
-                            new Date(b.recorded_at)
-                    )
-                    .slice(-10);
-
-                setSensorHistory(history);
-            } catch (error) {
-                console.error(
-                    "Sensor history loading error:",
-                    error
-                );
-
-                setSensorHistory([]);
-            }
-
-
-            const digitalTwinId =
-                dashboardData?.digital_twin?.id;
-
-
-            try {
-                await loadAnalytics(
-                    digitalTwinId
-                );
-            } catch (error) {
-                console.error(
-                    "Analytics loading error:",
-                    error
-                );
-            }
-        } catch (error) {
-            console.error(
-                "Dashboard loading error:",
-                error
-            );
-        } finally {
-            setLoading(false);
-        }
+        );
     };
 
 
@@ -211,76 +523,137 @@ function Dashboard() {
     }, []);
 
 
+    /* =========================================================
+       CHART DATA
+    ========================================================= */
+
     const chartData = useMemo(() => {
-        return sensorHistory.map((item, index) => ({
-            name: `Reading ${index + 1}`,
-            temperature: Number(item.temperature),
-            vibration: Number(item.vibration),
-            power: Number(item.power_usage),
-            speed: Number(item.operating_speed),
-        }));
+        return sensorHistory.map(
+            (item, index) => ({
+                name: `Reading ${
+                    index + 1
+                }`,
+
+                temperature:
+                    Number(
+                        item.temperature
+                    ) || 0,
+
+                vibration:
+                    Number(
+                        item.vibration
+                    ) || 0,
+
+                power:
+                    Number(
+                        item.power_usage
+                    ) || 0,
+
+                speed:
+                    Number(
+                        item.operating_speed
+                    ) || 0,
+            })
+        );
     }, [sensorHistory]);
 
 
-    const handleSimulationInput = (event) => {
-        const { name, value } = event.target;
+    /* =========================================================
+       SIMULATION INPUT
+    ========================================================= */
 
-        setSimulationInput((previous) => ({
-            ...previous,
-            [name]: value,
-        }));
+    const handleSimulationInput = (
+        event
+    ) => {
+        const {
+            name,
+            value,
+        } = event.target;
+
+
+        setSimulationInput(
+            (previous) => ({
+                ...previous,
+                [name]: value,
+            })
+        );
     };
 
 
+    /* =========================================================
+       RUN SIMULATION
+    ========================================================= */
+
     const runSimulation = async () => {
-        if (!dashboard?.current_state) {
+        if (
+            !dashboard?.current_state
+        ) {
             return;
         }
 
+
         try {
             setSimulationLoading(true);
+
             setDecision(null);
 
 
             const scenarios = [
                 {
-                    name: "Current Conditions",
+                    name:
+                        "Current Conditions",
+
                     temperature_change: 0,
+
                     vibration_change: 0,
+
                     power_usage_change: 0,
+
                     operating_speed_change: 0,
                 },
 
                 {
-                    name: "Increased Load",
-                    temperature_change: Number(
-                        simulationInput.temperature_change
-                    ),
-                    vibration_change: Number(
-                        simulationInput.vibration_change
-                    ),
-                    power_usage_change: Number(
-                        simulationInput.power_usage_change
-                    ),
-                    operating_speed_change: Number(
-                        simulationInput.operating_speed_change
-                    ),
+                    name:
+                        "Increased Load",
+
+                    temperature_change:
+                        Number(
+                            simulationInput.temperature_change
+                        ),
+
+                    vibration_change:
+                        Number(
+                            simulationInput.vibration_change
+                        ),
+
+                    power_usage_change:
+                        Number(
+                            simulationInput.power_usage_change
+                        ),
+
+                    operating_speed_change:
+                        Number(
+                            simulationInput.operating_speed_change
+                        ),
                 },
             ];
 
 
-            const response = await axios.post(
-                `${API_BASE_URL}/predictions/scenarios`,
-                {
-                    sensor_data:
-                        dashboard.current_state,
-                    scenarios,
-                }
-            );
+            const response =
+                await api.post(
+                    "/predictions/scenarios",
+                    {
+                        sensor_data:
+                            dashboard.current_state,
+
+                        scenarios,
+                    }
+                );
 
 
             setSimulationResults(
-                response.data?.results || []
+                response.data?.results ||
+                []
             );
         } catch (error) {
             console.error(
@@ -288,95 +661,164 @@ function Dashboard() {
                 error
             );
 
-            setSimulationResults([]);
+            setErrorMessage(
+                getErrorMessage(
+                    error,
+                    "Scenario Simulation"
+                )
+            );
         } finally {
             setSimulationLoading(false);
         }
     };
 
 
-    const generateDecision = async () => {
-        if (!simulationResults.length) {
-            return;
-        }
+    /* =========================================================
+       AUTONOMOUS DECISION
+    ========================================================= */
 
-        try {
-            setDecisionLoading(true);
-
-
-            const response = await axios.post(
-                `${API_BASE_URL}/predictions/decision`,
-                simulationResults
-            );
+    const generateDecision =
+        async () => {
+            if (
+                !simulationResults.length
+            ) {
+                return;
+            }
 
 
-            setDecision(response.data);
-        } catch (error) {
-            console.error(
-                "Decision error:",
-                error
-            );
-
-            setDecision(null);
-        } finally {
-            setDecisionLoading(false);
-        }
-    };
+            try {
+                setDecisionLoading(
+                    true
+                );
 
 
-    const getRiskClass = (riskLevel) => {
-        if (!riskLevel) {
-            return "risk-unknown";
-        }
+                const response =
+                    await api.post(
+                        "/predictions/decision",
+                        simulationResults
+                    );
 
-        return `risk-${String(
-            riskLevel
-        ).toLowerCase()}`;
-    };
 
+                setDecision(
+                    response.data
+                );
+            } catch (error) {
+                console.error(
+                    "Decision error:",
+                    error
+                );
+
+                setErrorMessage(
+                    getErrorMessage(
+                        error,
+                        "Autonomous Decision"
+                    )
+                );
+            } finally {
+                setDecisionLoading(
+                    false
+                );
+            }
+        };
+
+
+    /* =========================================================
+       RISK CLASS
+    ========================================================= */
+
+    const getRiskClass =
+        (riskLevel) => {
+            if (!riskLevel) {
+                return "risk-unknown";
+            }
+
+
+            return `risk-${String(
+                riskLevel
+            ).toLowerCase()}`;
+        };
+
+
+    /* =========================================================
+       LOADING
+    ========================================================= */
 
     if (loading) {
         return (
             <div className="dashboard-page">
+
                 <div className="dashboard-loading">
-                    Loading TwinSphere dashboard...
+
+                    Loading TwinSphere
+                    dashboard...
+
                 </div>
+
             </div>
         );
     }
 
 
-    if (!dashboard) {
+    /* =========================================================
+       ERROR
+    ========================================================= */
+
+    if (
+        !dashboard
+    ) {
         return (
             <div className="dashboard-page">
+
                 <div className="dashboard-error">
-                    <h2>Dashboard Error</h2>
+
+                    <h2>
+                        Dashboard Error
+                    </h2>
 
                     <p>
-                        Unable to load TwinSphere
-                        dashboard.
+                        {errorMessage ||
+                            "Unable to load TwinSphere dashboard."}
                     </p>
+
+
+                    <p>
+                        API:
+                        {" "}
+                        {API_BASE_URL}
+                    </p>
+
 
                     <button
                         className="dashboard-button"
-                        onClick={loadDashboard}
+                        onClick={
+                            loadDashboard
+                        }
                     >
                         Retry
                     </button>
+
                 </div>
+
             </div>
         );
     }
 
 
+    /* =========================================================
+       SAFE DATA
+    ========================================================= */
+
     const twin =
-        dashboard.digital_twin || {};
+        dashboard.digital_twin ||
+        {};
 
     const currentState =
-        dashboard.current_state || {};
+        dashboard.current_state ||
+        {};
 
     const risk =
-        dashboard.risk || {};
+        dashboard.risk ||
+        {};
 
     const learning =
         learningStatus ||
@@ -410,10 +852,14 @@ function Dashboard() {
         0;
 
 
+    /* =========================================================
+       MAIN UI
+    ========================================================= */
+
     return (
         <div className="dashboard-page">
 
-            {/* ================= HEADER ================= */}
+            {/* HEADER */}
 
             <header className="dashboard-header">
 
@@ -423,7 +869,9 @@ function Dashboard() {
                         AUTONOMOUS DIGITAL TWIN
                     </div>
 
-                    <h1>TwinSphere</h1>
+                    <h1>
+                        TwinSphere
+                    </h1>
 
                     <p>
                         Predictive Decision
@@ -441,7 +889,7 @@ function Dashboard() {
 
                         <strong>
                             {twin.name ||
-                                "Digital Twin"}
+                                "Factory Machine 01"}
                         </strong>
 
                         <span>
@@ -456,7 +904,7 @@ function Dashboard() {
             </header>
 
 
-            {/* ================= SENSOR CARDS ================= */}
+            {/* SENSOR CARDS */}
 
             <section className="sensor-grid">
 
@@ -470,8 +918,8 @@ function Dashboard() {
                         {Number(
                             currentState.temperature ??
                             0
-                        ).toFixed(1)}{" "}
-                        °C
+                        ).toFixed(1)}
+                        {" "}°C
                     </strong>
 
                 </div>
@@ -527,7 +975,7 @@ function Dashboard() {
             </section>
 
 
-            {/* ================= TWIN + RISK ================= */}
+            {/* DIGITAL TWIN + RISK */}
 
             <section className="two-column-grid">
 
@@ -557,7 +1005,7 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                #{twin.id ?? "-"}
+                                #{twin.id ?? 1}
                             </strong>
                         </div>
 
@@ -569,7 +1017,7 @@ function Dashboard() {
 
                             <strong>
                                 {twin.entity_type ||
-                                    "-"}
+                                    "Industrial Machine"}
                             </strong>
                         </div>
 
@@ -583,8 +1031,8 @@ function Dashboard() {
                                 {Number(
                                     currentState.temperature ??
                                     0
-                                ).toFixed(1)}{" "}
-                                °C
+                                ).toFixed(1)}
+                                {" "}°C
                             </strong>
                         </div>
 
@@ -650,7 +1098,7 @@ function Dashboard() {
                         >
                             {String(
                                 risk.risk_level ||
-                                "unknown"
+                                "low"
                             ).toUpperCase()}
                         </span>
 
@@ -660,7 +1108,8 @@ function Dashboard() {
                     <div className="risk-score-row">
 
                         <strong>
-                            {risk.risk_score ?? 0}
+                            {risk.risk_score ??
+                                0}
                         </strong>
 
                         <span>
@@ -677,6 +1126,7 @@ function Dashboard() {
 
                     {risk.risk_factors?.length >
                     0 ? (
+
                         <ul className="risk-list">
 
                             {risk.risk_factors.map(
@@ -684,20 +1134,27 @@ function Dashboard() {
                                     factor,
                                     index
                                 ) => (
+
                                     <li
-                                        key={index}
+                                        key={
+                                            index
+                                        }
                                     >
                                         {factor}
                                     </li>
+
                                 )
                             )}
 
                         </ul>
+
                     ) : (
+
                         <p className="muted-text">
                             No active risk
                             factors.
                         </p>
+
                     )}
 
                 </div>
@@ -705,7 +1162,7 @@ function Dashboard() {
             </section>
 
 
-            {/* ================= HISTORY + PREDICTION ================= */}
+            {/* SENSOR HISTORY + PREDICTION */}
 
             <section className="two-column-grid">
 
@@ -720,8 +1177,7 @@ function Dashboard() {
                             </h2>
 
                             <p>
-                                Recent
-                                digital-twin
+                                Recent digital-twin
                                 sensor readings
                             </p>
 
@@ -732,7 +1188,8 @@ function Dashboard() {
 
                     <div className="chart-container">
 
-                        {chartData.length > 0 ? (
+                        {chartData.length >
+                        0 ? (
 
                             <ResponsiveContainer
                                 width="100%"
@@ -740,42 +1197,31 @@ function Dashboard() {
                             >
 
                                 <LineChart
-                                    data={chartData}
+                                    data={
+                                        chartData
+                                    }
                                 >
 
                                     <CartesianGrid
                                         strokeDasharray="3 3"
-                                        stroke="#334155"
                                     />
 
                                     <XAxis
                                         dataKey="name"
-                                        stroke="#94a3b8"
                                     />
 
-                                    <YAxis
-                                        stroke="#94a3b8"
-                                    />
+                                    <YAxis />
 
-                                    <Tooltip
-                                        contentStyle={{
-                                            background:
-                                                "#0f172a",
-                                            border:
-                                                "1px solid #334155",
-                                            borderRadius:
-                                                "10px",
-                                            color:
-                                                "#ffffff",
-                                        }}
-                                    />
+                                    <Tooltip />
 
 
                                     <Line
                                         type="monotone"
                                         dataKey="temperature"
                                         stroke="#38bdf8"
-                                        strokeWidth={3}
+                                        strokeWidth={
+                                            3
+                                        }
                                         dot
                                     />
 
@@ -784,7 +1230,9 @@ function Dashboard() {
                                         type="monotone"
                                         dataKey="power"
                                         stroke="#a78bfa"
-                                        strokeWidth={2}
+                                        strokeWidth={
+                                            2
+                                        }
                                         dot
                                     />
 
@@ -793,7 +1241,9 @@ function Dashboard() {
                                         type="monotone"
                                         dataKey="vibration"
                                         stroke="#f59e0b"
-                                        strokeWidth={2}
+                                        strokeWidth={
+                                            2
+                                        }
                                         dot
                                     />
 
@@ -835,7 +1285,9 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {totalPredictions}
+                                {
+                                    totalPredictions
+                                }
                             </strong>
 
                         </div>
@@ -866,8 +1318,8 @@ function Dashboard() {
                             <strong>
                                 {Number(
                                     averageError
-                                ).toFixed(2)}{" "}
-                                °C
+                                ).toFixed(2)}
+                                {" "}°C
                             </strong>
 
                         </div>
@@ -880,7 +1332,9 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {accuratePredictions}
+                                {
+                                    accuratePredictions
+                                }
                             </strong>
 
                         </div>
@@ -892,7 +1346,7 @@ function Dashboard() {
             </section>
 
 
-            {/* ================= CONTINUOUS LEARNING ================= */}
+            {/* CONTINUOUS LEARNING */}
 
             <section className="dashboard-card learning-card">
 
@@ -906,7 +1360,7 @@ function Dashboard() {
 
                         <p>
                             {learning.reason ||
-                                "Learning status is being evaluated."}
+                                "Prediction feedback is being collected."}
                         </p>
 
                     </div>
@@ -939,8 +1393,8 @@ function Dashboard() {
                             {Number(
                                 learning.average_error ??
                                 0
-                            ).toFixed(2)}{" "}
-                            °C
+                            ).toFixed(2)}
+                            {" "}°C
                         </strong>
 
                     </div>
@@ -956,8 +1410,8 @@ function Dashboard() {
                             {Number(
                                 learning.retraining_threshold ??
                                 5
-                            ).toFixed(0)}{" "}
-                            °C
+                            ).toFixed(0)}
+                            {" "}°C
                         </strong>
 
                     </div>
@@ -970,9 +1424,11 @@ function Dashboard() {
                         </span>
 
                         <strong>
-                            {learning.total_predictions ??
+                            {
+                                learning.total_predictions ??
                                 totalPredictions ??
-                                0}
+                                0
+                            }
                         </strong>
 
                     </div>
@@ -982,7 +1438,7 @@ function Dashboard() {
             </section>
 
 
-            {/* ================= WHAT-IF SIMULATION ================= */}
+            {/* WHAT-IF SIMULATION */}
 
             <section className="dashboard-card simulation-card">
 
@@ -1008,9 +1464,7 @@ function Dashboard() {
                 <div className="simulation-input-grid">
 
                     <label>
-
-                        Temperature Change
-                        (°C)
+                        Temperature Change (°C)
 
                         <input
                             type="number"
@@ -1027,7 +1481,6 @@ function Dashboard() {
 
 
                     <label>
-
                         Vibration Change
 
                         <input
@@ -1045,7 +1498,6 @@ function Dashboard() {
 
 
                     <label>
-
                         Power Change
 
                         <input
@@ -1063,7 +1515,6 @@ function Dashboard() {
 
 
                     <label>
-
                         Speed Change
 
                         <input
@@ -1084,8 +1535,12 @@ function Dashboard() {
 
                 <button
                     className="dashboard-button primary"
-                    onClick={runSimulation}
-                    disabled={simulationLoading}
+                    onClick={
+                        runSimulation
+                    }
+                    disabled={
+                        simulationLoading
+                    }
                 >
                     {simulationLoading
                         ? "Running Simulation..."
@@ -1117,7 +1572,9 @@ function Dashboard() {
                                     <div className="scenario-header">
 
                                         <h3>
-                                            {scenario.scenario}
+                                            {
+                                                scenario.scenario
+                                            }
                                         </h3>
 
 
@@ -1151,8 +1608,8 @@ function Dashboard() {
                                                     0
                                                 ).toFixed(
                                                     2
-                                                )}{" "}
-                                                °C
+                                                )}
+                                                {" "}°C
                                             </strong>
 
                                         </div>
@@ -1223,21 +1680,21 @@ function Dashboard() {
                                     <div className="scenario-risk">
 
                                         <span>
-                                            Predicted
-                                            Risk Score
+                                            Predicted Risk
+                                            Score
                                         </span>
 
                                         <strong>
-                                            {scenario.risk_score ??
-                                                0}
+                                            {
+                                                scenario.risk_score ??
+                                                0
+                                            }
                                         </strong>
 
                                     </div>
 
 
-                                    {scenario
-                                        .risk_factors
-                                        ?.length >
+                                    {scenario.risk_factors?.length >
                                         0 && (
 
                                         <ul className="risk-list">
@@ -1253,7 +1710,9 @@ function Dashboard() {
                                                             factorIndex
                                                         }
                                                     >
-                                                        {factor}
+                                                        {
+                                                            factor
+                                                        }
                                                     </li>
 
                                                 )
@@ -1275,7 +1734,7 @@ function Dashboard() {
             </section>
 
 
-            {/* ================= AUTONOMOUS DECISION ================= */}
+            {/* AUTONOMOUS DECISION */}
 
             <section className="dashboard-card decision-card">
 
@@ -1315,7 +1774,9 @@ function Dashboard() {
 
                 <button
                     className="dashboard-button primary"
-                    onClick={generateDecision}
+                    onClick={
+                        generateDecision
+                    }
                     disabled={
                         !simulationResults.length ||
                         decisionLoading
@@ -1348,8 +1809,10 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {decision.recommended_scenario ||
-                                    "-"}
+                                {
+                                    decision.recommended_scenario ||
+                                    "-"
+                                }
                             </strong>
 
                         </div>
@@ -1362,8 +1825,10 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {decision.risk_score ??
-                                    0}
+                                {
+                                    decision.risk_score ??
+                                    0
+                                }
                             </strong>
 
                         </div>
@@ -1376,8 +1841,10 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {decision.action ||
-                                    "-"}
+                                {
+                                    decision.action ||
+                                    "-"
+                                }
                             </strong>
 
                         </div>
@@ -1390,8 +1857,10 @@ function Dashboard() {
                             </span>
 
                             <p>
-                                {decision.reason ||
-                                    "No decision reason available."}
+                                {
+                                    decision.reason ||
+                                    "-"
+                                }
                             </p>
 
                         </div>
@@ -1403,13 +1872,15 @@ function Dashboard() {
             </section>
 
 
-            {/* ================= REFRESH ================= */}
+            {/* REFRESH */}
 
             <div className="dashboard-footer">
 
                 <button
                     className="dashboard-button"
-                    onClick={loadDashboard}
+                    onClick={
+                        loadDashboard
+                    }
                 >
                     Refresh Dashboard
                 </button>
