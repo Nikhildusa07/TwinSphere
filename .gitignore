@@ -1,0 +1,101 @@
+# ================================
+# Python
+# ================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ================================
+# FastAPI / Backend
+# ================================
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+logs/
+
+# ================================
+# Database
+# ================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# ================================
+# Node / React
+# ================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Vite
+dist/
+.vite/
+
+# ================================
+# Environment / IDE
+# ================================
+
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# ================================
+# OS / Temporary Files
+# ================================
+
+.DS_Store
+*.tmp
+*.temp
+
+# ================================
+# Coverage
+# ================================
+
+.coverage
+htmlcov/
+.pytest_cache/
+
+# ================================
+# Build / Cache
+# ================================
+
+.cache/
+*.bak
+*.swp
+
+# ================================
+# Secrets
+# ================================
+
+*.pem
+*.key
