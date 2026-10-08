@@ -12,27 +12,30 @@ import {
     YAxis,
 } from "recharts";
 
-const API_BASE_URL =
+
+const API_BASE_URL = (
     import.meta.env.VITE_API_URL ||
-    "https://twinsphere.onrender.com";
+    "https://twinsphere.onrender.com"
+).replace(/\/+$/, "");
+
 
 function Dashboard() {
     const [dashboard, setDashboard] = useState(null);
     const [sensorHistory, setSensorHistory] = useState([]);
-    const [predictionAccuracy, setPredictionAccuracy] = useState(null);
 
     const [simulationResults, setSimulationResults] = useState([]);
     const [decision, setDecision] = useState(null);
 
-    const [causalAnalysis, setCausalAnalysis] = useState(null);
-    const [timeSeriesAnalysis, setTimeSeriesAnalysis] = useState(null);
-    const [simulationComparison, setSimulationComparison] = useState(null);
-    const [reinforcementLearning, setReinforcementLearning] = useState(null);
+    const [predictionAccuracy, setPredictionAccuracy] = useState(null);
+    const [learningStatus, setLearningStatus] = useState(null);
 
     const [loading, setLoading] = useState(true);
-    const [analyticsLoading, setAnalyticsLoading] = useState(false);
-    const [simulationLoading, setSimulationLoading] = useState(false);
-    const [decisionLoading, setDecisionLoading] = useState(false);
+
+    const [simulationLoading, setSimulationLoading] =
+        useState(false);
+
+    const [decisionLoading, setDecisionLoading] =
+        useState(false);
 
     const [simulationInput, setSimulationInput] = useState({
         temperature_change: 0,
@@ -41,130 +44,157 @@ function Dashboard() {
         operating_speed_change: 0,
     });
 
+
     const loadAnalytics = async (digitalTwinId) => {
         if (!digitalTwinId) {
             return;
         }
 
-        try {
-            setAnalyticsLoading(true);
+        const results = await Promise.allSettled([
+            axios.post(
+                `${API_BASE_URL}/predictions/causal-analysis?digital_twin_id=${digitalTwinId}`
+            ),
 
-            const results = await Promise.allSettled([
-                axios.post(
-                    `${API_BASE_URL}/predictions/causal-analysis?digital_twin_id=${digitalTwinId}`
-                ),
+            axios.post(
+                `${API_BASE_URL}/predictions/time-series?digital_twin_id=${digitalTwinId}`
+            ),
 
-                axios.post(
-                    `${API_BASE_URL}/predictions/time-series?digital_twin_id=${digitalTwinId}`
-                ),
+            axios.get(
+                `${API_BASE_URL}/predictions/simulation-vs-actual`
+            ),
 
-                axios.get(
-                    `${API_BASE_URL}/predictions/simulation-vs-actual`
-                ),
+            axios.get(
+                `${API_BASE_URL}/predictions/reinforcement-learning?digital_twin_id=${digitalTwinId}`
+            ),
 
-                axios.get(
-                    `${API_BASE_URL}/predictions/reinforcement-learning?digital_twin_id=${digitalTwinId}`
-                ),
+            axios.get(
+                `${API_BASE_URL}/feedback/accuracy`
+            ),
 
-                axios.get(
-                    `${API_BASE_URL}/feedback/accuracy`
-                ),
-            ]);
+            axios.get(
+                `${API_BASE_URL}/feedback/learning-status`
+            ),
+        ]);
 
-            const [
-                causalResult,
-                timeSeriesResult,
-                comparisonResult,
-                reinforcementResult,
-                accuracyResult,
-            ] = results;
 
-            if (causalResult.status === "fulfilled") {
-                setCausalAnalysis(causalResult.value.data);
-            } else {
-                console.error(
-                    "Causal analysis error:",
-                    causalResult.reason
-                );
-            }
+        const accuracyResult = results[4];
 
-            if (timeSeriesResult.status === "fulfilled") {
-                setTimeSeriesAnalysis(timeSeriesResult.value.data);
-            } else {
-                console.error(
-                    "Time-series analysis error:",
-                    timeSeriesResult.reason
-                );
-            }
-
-            if (comparisonResult.status === "fulfilled") {
-                setSimulationComparison(comparisonResult.value.data);
-            } else {
-                console.error(
-                    "Simulation comparison error:",
-                    comparisonResult.reason
-                );
-            }
-
-            if (reinforcementResult.status === "fulfilled") {
-                setReinforcementLearning(
-                    reinforcementResult.value.data
-                );
-            } else {
-                console.error(
-                    "Reinforcement learning error:",
-                    reinforcementResult.reason
-                );
-            }
-
-            if (accuracyResult.status === "fulfilled") {
-                setPredictionAccuracy(
-                    accuracyResult.value.data
-                );
-            } else {
-                console.error(
-                    "Prediction accuracy error:",
-                    accuracyResult.reason
-                );
-            }
-        } finally {
-            setAnalyticsLoading(false);
+        if (
+            accuracyResult.status === "fulfilled" &&
+            accuracyResult.value?.data
+        ) {
+            setPredictionAccuracy(
+                accuracyResult.value.data
+            );
         }
+
+
+        const learningResult = results[5];
+
+        if (
+            learningResult.status === "fulfilled" &&
+            learningResult.value?.data
+        ) {
+            setLearningStatus(
+                learningResult.value.data
+            );
+        }
+
+
+        results.forEach((result, index) => {
+            if (result.status === "rejected") {
+                const endpointNames = [
+                    "causal-analysis",
+                    "time-series",
+                    "simulation-vs-actual",
+                    "reinforcement-learning",
+                    "feedback/accuracy",
+                    "feedback/learning-status",
+                ];
+
+                console.error(
+                    `Analytics endpoint failed: ${endpointNames[index]}`,
+                    result.reason
+                );
+            }
+        });
     };
+
 
     const loadDashboard = async () => {
         try {
             setLoading(true);
 
-            const [
-                dashboardResponse,
-                sensorResponse,
-            ] = await Promise.all([
-                axios.get(
+            setDashboard(null);
+
+
+            let dashboardData = null;
+
+
+            try {
+                const dashboardResponse = await axios.get(
                     `${API_BASE_URL}/dashboard/overview`
-                ),
-                axios.get(
+                );
+
+                dashboardData = dashboardResponse.data;
+
+                setDashboard(dashboardData);
+            } catch (error) {
+                console.error(
+                    "Dashboard overview loading error:",
+                    error
+                );
+
+                setDashboard(null);
+
+                return;
+            }
+
+
+            try {
+                const sensorResponse = await axios.get(
                     `${API_BASE_URL}/sensor-data/`
-                ),
-            ]);
+                );
 
-            const dashboardData = dashboardResponse.data;
-
-            setDashboard(dashboardData);
-
-            const history = [...sensorResponse.data]
-                .sort(
-                    (a, b) =>
-                        new Date(a.recorded_at) -
-                        new Date(b.recorded_at)
+                const sensorData = Array.isArray(
+                    sensorResponse.data
                 )
-                .slice(-10);
+                    ? sensorResponse.data
+                    : [];
 
-            setSensorHistory(history);
+                const history = [...sensorData]
+                    .sort(
+                        (a, b) =>
+                            new Date(a.recorded_at) -
+                            new Date(b.recorded_at)
+                    )
+                    .slice(-10);
 
-            await loadAnalytics(
-                dashboardData?.digital_twin?.id
-            );
+                setSensorHistory(history);
+            } catch (error) {
+                console.error(
+                    "Sensor history loading error:",
+                    error
+                );
+
+                setSensorHistory([]);
+            }
+
+
+            const digitalTwinId =
+                dashboardData?.digital_twin?.id;
+
+
+            try {
+                await loadAnalytics(
+                    digitalTwinId
+                );
+            } catch (error) {
+                console.error(
+                    "Analytics loading error:",
+                    error
+                );
+            }
         } catch (error) {
             console.error(
                 "Dashboard loading error:",
@@ -175,9 +205,11 @@ function Dashboard() {
         }
     };
 
+
     useEffect(() => {
         loadDashboard();
     }, []);
+
 
     const chartData = useMemo(() => {
         return sensorHistory.map((item, index) => ({
@@ -189,6 +221,7 @@ function Dashboard() {
         }));
     }, [sensorHistory]);
 
+
     const handleSimulationInput = (event) => {
         const { name, value } = event.target;
 
@@ -197,6 +230,7 @@ function Dashboard() {
             [name]: value,
         }));
     };
+
 
     const runSimulation = async () => {
         if (!dashboard?.current_state) {
@@ -207,6 +241,7 @@ function Dashboard() {
             setSimulationLoading(true);
             setDecision(null);
 
+
             const scenarios = [
                 {
                     name: "Current Conditions",
@@ -215,6 +250,7 @@ function Dashboard() {
                     power_usage_change: 0,
                     operating_speed_change: 0,
                 },
+
                 {
                     name: "Increased Load",
                     temperature_change: Number(
@@ -232,26 +268,32 @@ function Dashboard() {
                 },
             ];
 
+
             const response = await axios.post(
                 `${API_BASE_URL}/predictions/scenarios`,
                 {
-                    sensor_data: dashboard.current_state,
+                    sensor_data:
+                        dashboard.current_state,
                     scenarios,
                 }
             );
 
+
             setSimulationResults(
-                response.data.results || []
+                response.data?.results || []
             );
         } catch (error) {
             console.error(
                 "Simulation error:",
                 error
             );
+
+            setSimulationResults([]);
         } finally {
             setSimulationLoading(false);
         }
     };
+
 
     const generateDecision = async () => {
         if (!simulationResults.length) {
@@ -261,10 +303,12 @@ function Dashboard() {
         try {
             setDecisionLoading(true);
 
+
             const response = await axios.post(
                 `${API_BASE_URL}/predictions/decision`,
                 simulationResults
             );
+
 
             setDecision(response.data);
         } catch (error) {
@@ -272,47 +316,24 @@ function Dashboard() {
                 "Decision error:",
                 error
             );
+
+            setDecision(null);
         } finally {
             setDecisionLoading(false);
         }
     };
+
 
     const getRiskClass = (riskLevel) => {
         if (!riskLevel) {
             return "risk-unknown";
         }
 
-        const normalizedRisk = String(
+        return `risk-${String(
             riskLevel
-        )
-            .trim()
-            .toLowerCase();
-
-        return `risk-${normalizedRisk}`;
+        ).toLowerCase()}`;
     };
 
-    const formatRiskLevel = (riskLevel) => {
-        if (!riskLevel) {
-            return "UNKNOWN";
-        }
-
-        return String(riskLevel)
-            .trim()
-            .toUpperCase();
-    };
-
-    const formatNumber = (
-        value,
-        decimals = 2
-    ) => {
-        const number = Number(value);
-
-        if (Number.isNaN(number)) {
-            return "—";
-        }
-
-        return number.toFixed(decimals);
-    };
 
     if (loading) {
         return (
@@ -323,6 +344,7 @@ function Dashboard() {
             </div>
         );
     }
+
 
     if (!dashboard) {
         return (
@@ -346,41 +368,57 @@ function Dashboard() {
         );
     }
 
-    const twin = dashboard.digital_twin;
-    const currentState =
-        dashboard.current_state;
-    const risk = dashboard.risk;
-    const learning =
-        dashboard.learning_status;
 
-    const evaluatedPredictions =
+    const twin =
+        dashboard.digital_twin || {};
+
+    const currentState =
+        dashboard.current_state || {};
+
+    const risk =
+        dashboard.risk || {};
+
+    const learning =
+        learningStatus ||
+        dashboard.learning_status ||
+        {};
+
+
+    const totalPredictions =
         predictionAccuracy?.total_predictions ??
         learning.total_predictions ??
         0;
 
+
     const accuracyRate =
         predictionAccuracy?.accuracy_rate ??
+        predictionAccuracy?.accuracy ??
         learning.accuracy_rate ??
         learning.accuracy ??
         0;
+
 
     const averageError =
         predictionAccuracy?.average_error ??
         learning.average_error ??
         0;
 
+
     const accuratePredictions =
-        predictionAccuracy?.accurate ??
         predictionAccuracy?.accurate_predictions ??
         learning.accurate_predictions ??
         0;
 
+
     return (
         <div className="dashboard-page">
+
             {/* ================= HEADER ================= */}
 
             <header className="dashboard-header">
+
                 <div>
+
                     <div className="dashboard-eyebrow">
                         AUTONOMOUS DIGITAL TWIN
                     </div>
@@ -391,106 +429,138 @@ function Dashboard() {
                         Predictive Decision
                         Intelligence Dashboard
                     </p>
+
                 </div>
 
+
                 <div className="machine-status">
+
                     <span className="status-dot"></span>
 
                     <div>
+
                         <strong>
-                            {twin.name}
+                            {twin.name ||
+                                "Digital Twin"}
                         </strong>
 
                         <span>
-                            {twin.entity_type}
+                            {twin.entity_type ||
+                                "Industrial Machine"}
                         </span>
+
                     </div>
+
                 </div>
+
             </header>
+
 
             {/* ================= SENSOR CARDS ================= */}
 
             <section className="sensor-grid">
+
                 <div className="metric-card">
+
                     <span>
                         Temperature
                     </span>
 
                     <strong>
-                        {formatNumber(
-                            currentState.temperature,
-                            1
-                        )}{" "}
+                        {Number(
+                            currentState.temperature ??
+                            0
+                        ).toFixed(1)}{" "}
                         °C
                     </strong>
+
                 </div>
 
+
                 <div className="metric-card">
+
                     <span>
                         Vibration
                     </span>
 
                     <strong>
-                        {formatNumber(
-                            currentState.vibration,
-                            1
-                        )}
+                        {Number(
+                            currentState.vibration ??
+                            0
+                        ).toFixed(1)}
                     </strong>
+
                 </div>
 
+
                 <div className="metric-card">
+
                     <span>
                         Power Usage
                     </span>
 
                     <strong>
-                        {formatNumber(
-                            currentState.power_usage,
-                            1
-                        )}
+                        {Number(
+                            currentState.power_usage ??
+                            0
+                        ).toFixed(1)}
                     </strong>
+
                 </div>
 
+
                 <div className="metric-card">
+
                     <span>
                         Operating Speed
                     </span>
 
                     <strong>
-                        {formatNumber(
-                            currentState.operating_speed,
+                        {Number(
+                            currentState.operating_speed ??
                             0
-                        )}
+                        ).toFixed(0)}
                     </strong>
+
                 </div>
+
             </section>
+
 
             {/* ================= TWIN + RISK ================= */}
 
             <section className="two-column-grid">
+
                 <div className="dashboard-card">
+
                     <div className="card-header">
+
                         <h2>
                             Digital Twin State
                         </h2>
 
                         <span className="status-badge normal">
-                            {formatRiskLevel(
-                                twin.status
-                            )}
+                            {String(
+                                twin.status ||
+                                "normal"
+                            ).toUpperCase()}
                         </span>
+
                     </div>
 
+
                     <div className="twin-details">
+
                         <div>
                             <span>
                                 Digital Twin ID
                             </span>
 
                             <strong>
-                                #{twin.id}
+                                #{twin.id ?? "-"}
                             </strong>
                         </div>
+
 
                         <div>
                             <span>
@@ -498,9 +568,11 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {twin.entity_type}
+                                {twin.entity_type ||
+                                    "-"}
                             </strong>
                         </div>
+
 
                         <div>
                             <span>
@@ -508,13 +580,14 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {formatNumber(
-                                    currentState.temperature,
-                                    1
-                                )}{" "}
+                                {Number(
+                                    currentState.temperature ??
+                                    0
+                                ).toFixed(1)}{" "}
                                 °C
                             </strong>
                         </div>
+
 
                         <div>
                             <span>
@@ -522,12 +595,13 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {formatNumber(
-                                    currentState.vibration,
-                                    1
-                                )}
+                                {Number(
+                                    currentState.vibration ??
+                                    0
+                                ).toFixed(1)}
                             </strong>
                         </div>
+
 
                         <div>
                             <span>
@@ -535,12 +609,13 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {formatNumber(
-                                    currentState.power_usage,
-                                    1
-                                )}
+                                {Number(
+                                    currentState.power_usage ??
+                                    0
+                                ).toFixed(1)}
                             </strong>
                         </div>
+
 
                         <div>
                             <span>
@@ -548,17 +623,22 @@ function Dashboard() {
                             </span>
 
                             <strong>
-                                {formatNumber(
-                                    currentState.operating_speed,
+                                {Number(
+                                    currentState.operating_speed ??
                                     0
-                                )}
+                                ).toFixed(0)}
                             </strong>
                         </div>
+
                     </div>
+
                 </div>
 
+
                 <div className="dashboard-card">
+
                     <div className="card-header">
+
                         <h2>
                             Operational Risk
                         </h2>
@@ -568,43 +648,50 @@ function Dashboard() {
                                 risk.risk_level
                             )}`}
                         >
-                            {formatRiskLevel(
-                                risk.risk_level
-                            )}
+                            {String(
+                                risk.risk_level ||
+                                "unknown"
+                            ).toUpperCase()}
                         </span>
+
                     </div>
 
+
                     <div className="risk-score-row">
+
                         <strong>
-                            {risk.risk_score}
+                            {risk.risk_score ?? 0}
                         </strong>
 
                         <span>
                             Risk Score
                         </span>
+
                     </div>
+
 
                     <h4>
                         Risk Factors
                     </h4>
 
+
                     {risk.risk_factors?.length >
                     0 ? (
                         <ul className="risk-list">
+
                             {risk.risk_factors.map(
                                 (
                                     factor,
                                     index
                                 ) => (
                                     <li
-                                        key={
-                                            index
-                                        }
+                                        key={index}
                                     >
                                         {factor}
                                     </li>
                                 )
                             )}
+
                         </ul>
                     ) : (
                         <p className="muted-text">
@@ -612,15 +699,22 @@ function Dashboard() {
                             factors.
                         </p>
                     )}
+
                 </div>
+
             </section>
+
 
             {/* ================= HISTORY + PREDICTION ================= */}
 
             <section className="two-column-grid">
+
                 <div className="dashboard-card chart-card">
+
                     <div className="card-header">
+
                         <div>
+
                             <h2>
                                 Sensor History
                             </h2>
@@ -628,24 +722,27 @@ function Dashboard() {
                             <p>
                                 Recent
                                 digital-twin
-                                sensor
-                                readings
+                                sensor readings
                             </p>
+
                         </div>
+
                     </div>
 
+
                     <div className="chart-container">
-                        {chartData.length >
-                        0 ? (
+
+                        {chartData.length > 0 ? (
+
                             <ResponsiveContainer
                                 width="100%"
                                 height={280}
                             >
+
                                 <LineChart
-                                    data={
-                                        chartData
-                                    }
+                                    data={chartData}
                                 >
+
                                     <CartesianGrid
                                         strokeDasharray="3 3"
                                         stroke="#334155"
@@ -673,130 +770,147 @@ function Dashboard() {
                                         }}
                                     />
 
+
                                     <Line
                                         type="monotone"
                                         dataKey="temperature"
                                         stroke="#38bdf8"
-                                        strokeWidth={
-                                            3
-                                        }
+                                        strokeWidth={3}
                                         dot
                                     />
+
 
                                     <Line
                                         type="monotone"
                                         dataKey="power"
                                         stroke="#a78bfa"
-                                        strokeWidth={
-                                            2
-                                        }
+                                        strokeWidth={2}
                                         dot
                                     />
+
 
                                     <Line
                                         type="monotone"
                                         dataKey="vibration"
                                         stroke="#f59e0b"
-                                        strokeWidth={
-                                            2
-                                        }
+                                        strokeWidth={2}
                                         dot
                                     />
+
                                 </LineChart>
+
                             </ResponsiveContainer>
+
                         ) : (
+
                             <div className="empty-state">
-                                No sensor
-                                history
+                                No sensor history
                                 available.
                             </div>
+
                         )}
+
                     </div>
+
                 </div>
 
+
                 <div className="dashboard-card">
+
                     <div className="card-header">
+
                         <h2>
-                            Prediction
-                            Performance
+                            Prediction Performance
                         </h2>
+
                     </div>
 
+
                     <div className="prediction-grid">
+
                         <div>
+
                             <span>
-                                Evaluated
-                                Predictions
+                                Total Predictions
                             </span>
 
                             <strong>
-                                {
-                                    evaluatedPredictions
-                                }
+                                {totalPredictions}
                             </strong>
+
                         </div>
 
+
                         <div>
+
                             <span>
                                 Accuracy Rate
                             </span>
 
                             <strong>
-                                {
-                                    formatNumber(
-                                        accuracyRate,
-                                        0
-                                    )
-                                }
+                                {Number(
+                                    accuracyRate
+                                ).toFixed(1)}
                                 %
                             </strong>
+
                         </div>
 
+
                         <div>
+
                             <span>
                                 Average Error
                             </span>
 
                             <strong>
-                                {
-                                    formatNumber(
-                                        averageError,
-                                        2
-                                    )
-                                }{" "}
+                                {Number(
+                                    averageError
+                                ).toFixed(2)}{" "}
                                 °C
                             </strong>
+
                         </div>
 
+
                         <div>
+
                             <span>
                                 Accurate
                             </span>
 
                             <strong>
-                                {
-                                    accuratePredictions
-                                }
+                                {accuratePredictions}
                             </strong>
+
                         </div>
+
                     </div>
+
                 </div>
+
             </section>
+
 
             {/* ================= CONTINUOUS LEARNING ================= */}
 
             <section className="dashboard-card learning-card">
+
                 <div className="card-header">
+
                     <div>
+
                         <h2>
-                            Continuous
-                            Learning
+                            Continuous Learning
                         </h2>
 
                         <p>
-                            {learning.reason}
+                            {learning.reason ||
+                                "Learning status is being evaluated."}
                         </p>
+
                     </div>
+
 
                     <span
                         className={`status-badge ${
@@ -809,286 +923,75 @@ function Dashboard() {
                             ? "RETRAINING REQUIRED"
                             : "MODEL STABLE"}
                     </span>
+
                 </div>
 
+
                 <div className="learning-stats">
+
                     <div>
+
                         <span>
                             Average Error
                         </span>
 
                         <strong>
-                            {
-                                formatNumber(
-                                    learning.average_error,
-                                    2
-                                )
-                            }{" "}
+                            {Number(
+                                learning.average_error ??
+                                0
+                            ).toFixed(2)}{" "}
                             °C
                         </strong>
+
                     </div>
 
+
                     <div>
+
                         <span>
-                            Retraining
-                            Threshold
+                            Retraining Threshold
                         </span>
 
                         <strong>
-                            {
-                                formatNumber(
-                                    learning.retraining_threshold ??
-                                        5,
-                                    0
-                                )
-                            }{" "}
+                            {Number(
+                                learning.retraining_threshold ??
+                                5
+                            ).toFixed(0)}{" "}
                             °C
                         </strong>
+
                     </div>
 
+
                     <div>
+
                         <span>
-                            Predictions
-                            Evaluated
+                            Predictions Evaluated
                         </span>
 
                         <strong>
-                            {
-                                learning.total_predictions
-                            }
+                            {learning.total_predictions ??
+                                totalPredictions ??
+                                0}
                         </strong>
-                    </div>
-                </div>
-            </section>
 
-            {/* ================= ADVANCED INTELLIGENCE ================= */}
-
-            <section className="dashboard-card">
-                <div className="card-header">
-                    <div>
-                        <h2>
-                            Advanced Intelligence
-                        </h2>
-
-                        <p>
-                            Causal analysis,
-                            time-series
-                            forecasting,
-                            simulation
-                            validation and
-                            reinforcement
-                            learning
-                        </p>
                     </div>
 
-                    <span
-                        className={`status-badge ${
-                            analyticsLoading
-                                ? "risk-medium"
-                                : "normal"
-                        }`}
-                    >
-                        {analyticsLoading
-                            ? "ANALYZING"
-                            : "READY"}
-                    </span>
                 </div>
 
-                {analyticsLoading ? (
-                    <p className="muted-text">
-                        Running advanced
-                        intelligence
-                        analysis...
-                    </p>
-                ) : (
-                    <div className="decision-result">
-                        {/* CAUSAL ANALYSIS */}
-
-                        <div className="decision-item">
-                            <span>
-                                Strongest
-                                Influencing
-                                Factor
-                            </span>
-
-                            <strong>
-                                {causalAnalysis?.strongest_influencing_factor ??
-                                    "—"}
-                            </strong>
-                        </div>
-
-                        <div className="decision-item">
-                            <span>
-                                Causal
-                                Interpretation
-                            </span>
-
-                            <p>
-                                {causalAnalysis?.interpretation ??
-                                    "Causal analysis data is not available."}
-                            </p>
-                        </div>
-
-                        {/* TIME SERIES */}
-
-                        <div className="decision-item">
-                            <span>
-                                Temperature
-                                Trend
-                            </span>
-
-                            <strong>
-                                {timeSeriesAnalysis?.trend_direction
-                                    ? String(
-                                          timeSeriesAnalysis.trend_direction
-                                      ).toUpperCase()
-                                    : "—"}
-                            </strong>
-                        </div>
-
-                        <div className="decision-item">
-                            <span>
-                                Forecasted Next
-                                Temperature
-                            </span>
-
-                            <strong>
-                                {timeSeriesAnalysis?.forecasted_next_temperature !==
-                                undefined
-                                    ? `${formatNumber(
-                                          timeSeriesAnalysis.forecasted_next_temperature,
-                                          2
-                                      )} °C`
-                                    : "—"}
-                            </strong>
-                        </div>
-
-                        <div className="decision-item">
-                            <span>
-                                Time-Series
-                                Interpretation
-                            </span>
-
-                            <p>
-                                {timeSeriesAnalysis?.interpretation ??
-                                    "Time-series analysis data is not available."}
-                            </p>
-                        </div>
-
-                        {/* SIMULATION VS ACTUAL */}
-
-                        <div className="decision-item">
-                            <span>
-                                Simulation vs
-                                Actual Accuracy
-                            </span>
-
-                            <strong>
-                                {simulationComparison?.accuracy_rate !==
-                                undefined
-                                    ? `${formatNumber(
-                                          simulationComparison.accuracy_rate,
-                                          0
-                                      )}%`
-                                    : "—"}
-                            </strong>
-                        </div>
-
-                        <div className="decision-item">
-                            <span>
-                                Simulation
-                                Average Error
-                            </span>
-
-                            <strong>
-                                {simulationComparison?.average_error !==
-                                undefined
-                                    ? `${formatNumber(
-                                          simulationComparison.average_error,
-                                          2
-                                      )} °C`
-                                    : "—"}
-                            </strong>
-                        </div>
-
-                        <div className="decision-item">
-                            <span>
-                                Simulation
-                                Interpretation
-                            </span>
-
-                            <p>
-                                {simulationComparison?.interpretation ??
-                                    "Simulation comparison data is not available."}
-                            </p>
-                        </div>
-
-                        {/* REINFORCEMENT LEARNING */}
-
-                        <div className="decision-item">
-                            <span>
-                                RL State
-                            </span>
-
-                            <strong>
-                                {reinforcementLearning?.state
-                                    ? String(
-                                          reinforcementLearning.state
-                                      ).toUpperCase()
-                                    : "—"}
-                            </strong>
-                        </div>
-
-                        <div className="decision-item">
-                            <span>
-                                RL Recommended
-                                Action
-                            </span>
-
-                            <strong>
-                                {reinforcementLearning?.recommended_action ??
-                                    "—"}
-                            </strong>
-                        </div>
-
-                        <div className="decision-item">
-                            <span>
-                                Estimated Reward
-                            </span>
-
-                            <strong>
-                                {reinforcementLearning?.estimated_reward !==
-                                undefined
-                                    ? formatNumber(
-                                          reinforcementLearning.estimated_reward,
-                                          2
-                                      )
-                                    : "—"}
-                            </strong>
-                        </div>
-
-                        <div className="decision-item">
-                            <span>
-                                Learning Method
-                            </span>
-
-                            <p>
-                                {reinforcementLearning?.learning_method ??
-                                    "—"}
-                            </p>
-                        </div>
-                    </div>
-                )}
             </section>
+
 
             {/* ================= WHAT-IF SIMULATION ================= */}
 
             <section className="dashboard-card simulation-card">
+
                 <div className="card-header">
+
                     <div>
+
                         <h2>
-                            What-If
-                            Simulation
+                            What-If Simulation
                         </h2>
 
                         <p>
@@ -1096,11 +999,16 @@ function Dashboard() {
                             future operating
                             conditions
                         </p>
+
                     </div>
+
                 </div>
 
+
                 <div className="simulation-input-grid">
+
                     <label>
+
                         Temperature Change
                         (°C)
 
@@ -1114,9 +1022,12 @@ function Dashboard() {
                                 handleSimulationInput
                             }
                         />
+
                     </label>
 
+
                     <label>
+
                         Vibration Change
 
                         <input
@@ -1129,9 +1040,12 @@ function Dashboard() {
                                 handleSimulationInput
                             }
                         />
+
                     </label>
 
+
                     <label>
+
                         Power Change
 
                         <input
@@ -1144,9 +1058,12 @@ function Dashboard() {
                                 handleSimulationInput
                             }
                         />
+
                     </label>
 
+
                     <label>
+
                         Speed Change
 
                         <input
@@ -1159,8 +1076,11 @@ function Dashboard() {
                                 handleSimulationInput
                             }
                         />
+
                     </label>
+
                 </div>
+
 
                 <button
                     className="dashboard-button primary"
@@ -1172,178 +1092,226 @@ function Dashboard() {
                         : "Run What-If Simulation"}
                 </button>
 
+
                 {simulationResults.length >
                     0 && (
+
                     <div className="simulation-results">
+
                         <h3>
-                            Simulation
-                            Results
+                            Simulation Results
                         </h3>
+
 
                         {simulationResults.map(
                             (
                                 scenario,
                                 index
                             ) => (
+
                                 <div
                                     className="scenario-card"
-                                    key={
-                                        index
-                                    }
+                                    key={index}
                                 >
+
                                     <div className="scenario-header">
+
                                         <h3>
-                                            {
-                                                scenario.scenario
-                                            }
+                                            {scenario.scenario}
                                         </h3>
+
 
                                         <span
                                             className={`status-badge ${getRiskClass(
                                                 scenario.risk_level
                                             )}`}
                                         >
-                                            {formatRiskLevel(
-                                                scenario.risk_level
-                                            )}
+                                            {String(
+                                                scenario.risk_level ||
+                                                "unknown"
+                                            ).toUpperCase()}
                                         </span>
+
                                     </div>
 
+
                                     <div className="scenario-values">
+
                                         <div>
+
                                             <span>
                                                 Temperature
                                             </span>
 
                                             <strong>
-                                                {formatNumber(
+                                                {Number(
                                                     scenario
                                                         .simulated_state
-                                                        .temperature,
+                                                        ?.temperature ??
+                                                    0
+                                                ).toFixed(
                                                     2
                                                 )}{" "}
                                                 °C
                                             </strong>
+
                                         </div>
 
+
                                         <div>
+
                                             <span>
                                                 Vibration
                                             </span>
 
                                             <strong>
-                                                {formatNumber(
+                                                {Number(
                                                     scenario
                                                         .simulated_state
-                                                        .vibration,
+                                                        ?.vibration ??
+                                                    0
+                                                ).toFixed(
                                                     2
                                                 )}
                                             </strong>
+
                                         </div>
 
+
                                         <div>
+
                                             <span>
                                                 Power
                                             </span>
 
                                             <strong>
-                                                {formatNumber(
+                                                {Number(
                                                     scenario
                                                         .simulated_state
-                                                        .power_usage,
+                                                        ?.power_usage ??
+                                                    0
+                                                ).toFixed(
                                                     2
                                                 )}
                                             </strong>
+
                                         </div>
 
+
                                         <div>
+
                                             <span>
                                                 Speed
                                             </span>
 
                                             <strong>
-                                                {formatNumber(
+                                                {Number(
                                                     scenario
                                                         .simulated_state
-                                                        .operating_speed,
+                                                        ?.operating_speed ??
+                                                    0
+                                                ).toFixed(
                                                     0
                                                 )}
                                             </strong>
+
                                         </div>
+
                                     </div>
 
+
                                     <div className="scenario-risk">
+
                                         <span>
                                             Predicted
                                             Risk Score
                                         </span>
 
                                         <strong>
-                                            {
-                                                scenario.risk_score
-                                            }
+                                            {scenario.risk_score ??
+                                                0}
                                         </strong>
+
                                     </div>
+
 
                                     {scenario
                                         .risk_factors
                                         ?.length >
                                         0 && (
+
                                         <ul className="risk-list">
+
                                             {scenario.risk_factors.map(
                                                 (
                                                     factor,
                                                     factorIndex
                                                 ) => (
+
                                                     <li
                                                         key={
                                                             factorIndex
                                                         }
                                                     >
-                                                        {
-                                                            factor
-                                                        }
+                                                        {factor}
                                                     </li>
+
                                                 )
                                             )}
+
                                         </ul>
+
                                     )}
+
                                 </div>
+
                             )
                         )}
+
                     </div>
+
                 )}
+
             </section>
+
 
             {/* ================= AUTONOMOUS DECISION ================= */}
 
             <section className="dashboard-card decision-card">
+
                 <div className="card-header">
+
                     <div>
+
                         <h2>
-                            Autonomous
-                            Decision
+                            Autonomous Decision
                         </h2>
 
                         <p>
                             Select the safest
-                            simulated
-                            outcome
+                            simulated outcome
                         </p>
+
                     </div>
 
+
                     {decision && (
+
                         <span
                             className={`status-badge ${getRiskClass(
                                 decision.risk_level
                             )}`}
                         >
-                            {formatRiskLevel(
-                                decision.risk_level
-                            )}
+                            {String(
+                                decision.risk_level ||
+                                "unknown"
+                            ).toUpperCase()}
                         </span>
+
                     )}
+
                 </div>
+
 
                 <button
                     className="dashboard-button primary"
@@ -1358,81 +1326,99 @@ function Dashboard() {
                         : "Generate Autonomous Decision"}
                 </button>
 
+
                 {!simulationResults.length && (
+
                     <p className="muted-text">
-                        Run a What-If
-                        Simulation first.
+                        Run a What-If Simulation
+                        first.
                     </p>
+
                 )}
 
+
                 {decision && (
+
                     <div className="decision-result">
+
                         <div className="decision-item">
+
                             <span>
-                                Recommended
-                                Scenario
+                                Recommended Scenario
                             </span>
 
                             <strong>
-                                {
-                                    decision.recommended_scenario
-                                }
+                                {decision.recommended_scenario ||
+                                    "-"}
                             </strong>
+
                         </div>
 
+
                         <div className="decision-item">
+
                             <span>
-                                Predicted Risk
-                                Score
+                                Predicted Risk Score
                             </span>
 
                             <strong>
-                                {
-                                    decision.risk_score
-                                }
+                                {decision.risk_score ??
+                                    0}
                             </strong>
+
                         </div>
 
+
                         <div className="decision-item">
+
                             <span>
-                                Recommended
-                                Action
+                                Recommended Action
                             </span>
 
                             <strong>
-                                {
-                                    decision.action
-                                }
+                                {decision.action ||
+                                    "-"}
                             </strong>
+
                         </div>
 
+
                         <div className="decision-item">
+
                             <span>
                                 Decision Reason
                             </span>
 
                             <p>
-                                {
-                                    decision.reason
-                                }
+                                {decision.reason ||
+                                    "No decision reason available."}
                             </p>
+
                         </div>
+
                     </div>
+
                 )}
+
             </section>
+
 
             {/* ================= REFRESH ================= */}
 
             <div className="dashboard-footer">
+
                 <button
                     className="dashboard-button"
                     onClick={loadDashboard}
                 >
                     Refresh Dashboard
                 </button>
+
             </div>
+
         </div>
     );
 }
+
 
 export default Dashboard;
